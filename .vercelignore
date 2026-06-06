@@ -8,3 +8,20 @@ web/dist/
 tools/
 cli/
 brain-*.html
+
+# Backend + data — hosted on Render, not Vercel
+app.py
+pyproject.toml
+requirements.txt
+requirements.prod.txt
+backend/
+hormozi-brain/
+hormozi-index/
+render-data.zip
+Dockerfile
+render.yaml
+scripts/render_install_data.sh
+scripts/render_push.bat
+scripts/stage_for_render.bat
+scripts/pack_render_data.bat
+vercel_build.py

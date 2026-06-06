@@ -5,7 +5,11 @@ __pycache__/
 .cursor/
 web/node_modules/
 web/dist/
+public/
 .brain_cache/
 transcripts/
 .env
 .env.*
+# If using render-data.zip instead of folders, ignore loose dirs to shrink context:
+# hormozi-brain/
+# hormozi-index/

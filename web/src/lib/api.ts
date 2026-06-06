@@ -2,7 +2,7 @@ import type { BrainStats, Chunk, GraphData } from "../types";
 
 const TOKEN_KEY = "hormozi_web_token";
 
-/** Empty = same-origin (/api). Set VITE_API_BASE_URL only for split-host deploys. */
+/** Empty = same-origin (/api). Vercel rewrites /api → Render backend. */
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
 export function getToken(): string {

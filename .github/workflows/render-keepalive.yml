@@ -1,0 +1,22 @@
+# Ping Render so the free-tier web service stays warm (~15 min idle sleep).
+# Runs every 14 minutes. Uses ~1 min/month of GitHub Actions time.
+
+name: Render keep-alive
+
+on:
+  schedule:
+    - cron: "*/14 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          URL="${RENDER_URL:-https://hormozi-s-transcripts.onrender.com}"
+          echo "Pinging ${URL}/api/health"
+          curl -fsS --max-time 120 "${URL}/api/health"
+          echo " OK"
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}

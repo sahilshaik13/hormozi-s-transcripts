@@ -1,7 +1,7 @@
-# Render Blueprint — no persistent disk required (data baked into Docker image).
+# Render Blueprint — no persistent disk. Data must be in git OR render-data.zip.
 #
-# BEFORE first deploy, run:  scripts\stage_for_render.bat
-# That force-adds hormozi-brain/ + hormozi-index/ to git (private repo only).
+# Option A: scripts\stage_for_render.bat  → commit + push folders
+# Option B: scripts\pack_render_data.bat → git add -f render-data.zip → push
 
 services:
   - type: web
