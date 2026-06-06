@@ -1,0 +1,12 @@
+{
+  "name": "hormozi-brain",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hormozi Brain — Vercel deploys the web UI; Python API runs separately.",
+  "scripts": {
+    "build": "python vercel_build.py",
+    "dev": "npm run dev --prefix web",
+    "preview": "npm run preview --prefix web",
+    "vercel-build": "python vercel_build.py"
+  }
+}

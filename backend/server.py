@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from backend.config import load_env
 from backend.core import DOMAIN_TYPE_MAP, get_brain
 from backend.paths import VAULT_DIR, WEB_DIST
+from backend.runtime import is_vercel
 from backend.viz import (
     TYPE_COLORS,
     apply_retrieval_highlights,
@@ -101,14 +102,28 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _cors_origins() -> list[str]:
+    defaults = [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
         "http://127.0.0.1:8000",
         "http://localhost:8000",
-    ],
+    ]
+    extra = os.getenv("CORS_ORIGINS", "").strip()
+    if not extra:
+        return defaults
+    return defaults + [o.strip() for o in extra.split(",") if o.strip()]
+
+
+def _cors_origin_regex() -> str | None:
+    raw = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip()
+    return raw or None
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -208,7 +223,7 @@ def refresh_graph_cache() -> dict:
     return {"refreshed": True, "nodes": g["stats"]["total_nodes"]}
 
 
-if WEB_DIST.exists():
+if WEB_DIST.exists() and not is_vercel():
     assets_dir = WEB_DIST / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")

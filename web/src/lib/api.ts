@@ -2,8 +2,13 @@ import type { BrainStats, Chunk, GraphData } from "../types";
 
 const TOKEN_KEY = "hormozi_web_token";
 
+/** Empty = same-origin (/api). Set VITE_API_BASE_URL only for split-host deploys. */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
 export function getToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? "";
+  const stored = localStorage.getItem(TOKEN_KEY);
+  if (stored) return stored;
+  return (import.meta.env.VITE_HORMOZI_WEB_TOKEN as string | undefined)?.trim() ?? "";
 }
 
 export function setToken(token: string) {
@@ -19,7 +24,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(path, { ...init, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(detail || res.statusText);

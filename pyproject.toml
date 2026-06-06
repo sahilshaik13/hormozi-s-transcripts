@@ -1,0 +1,14 @@
+[project]
+name = "hormozi-brain"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "google-genai",
+  "chromadb",
+  "python-dotenv",
+  "fastapi",
+  "uvicorn[standard]",
+]
+
+[tool.vercel]
+entrypoint = "app:app"

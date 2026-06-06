@@ -7,7 +7,8 @@ import re
 import time
 
 from backend.config import get_gemini_api_key
-from backend.paths import INDEX_DIR, VAULT_DIR
+from backend.paths import VAULT_DIR
+from backend.runtime import get_writable_index_dir
 
 try:
     from google import genai
@@ -338,12 +339,13 @@ class HormoziBrain:
         if self._collection is not None:
             return
 
-        if not INDEX_DIR.exists():
+        index_dir = get_writable_index_dir()
+        if not index_dir.exists():
             raise FileNotFoundError(
-                f"Index not found at '{INDEX_DIR}'. Run tools/build_index.py first."
+                f"Index not found at '{index_dir}'. Run tools/build_index.py first."
             )
 
-        chroma = chromadb.PersistentClient(path=str(INDEX_DIR))
+        chroma = chromadb.PersistentClient(path=str(index_dir))
         try:
             self._collection = chroma.get_collection("hormozi_brain")
             self._chunk_count = self._collection.count()
@@ -373,9 +375,10 @@ class HormoziBrain:
 
     def stats(self) -> dict:
         self._load()
+        index_dir = get_writable_index_dir()
         return {
             "vault_dir": str(VAULT_DIR),
-            "index_dir": str(INDEX_DIR),
+            "index_dir": str(index_dir),
             "chunk_count": self._chunk_count,
             "note_count": self._note_count,
             "domains": sorted(DOMAIN_TYPE_MAP.keys()),

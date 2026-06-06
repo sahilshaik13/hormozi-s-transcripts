@@ -34,9 +34,7 @@ def get_gemini_api_key() -> str:
     load_env()
     key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not key or key in ("your_key_here", "YOUR_GEMINI_API_KEY_HERE"):
-        raise SystemExit(
-            "\n  GEMINI_API_KEY not set.\n"
-            "  1. Copy .env.example → .env\n"
-            "  2. Add your key from https://aistudio.google.com/apikey\n"
+        raise RuntimeError(
+            "GEMINI_API_KEY not set. Add it in Vercel → Settings → Environment Variables."
         )
     return key

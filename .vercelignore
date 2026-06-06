@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+transcripts/
+.brain_cache/
+web/node_modules/
+web/dist/
+tools/
+cli/
+*.html
