@@ -1,0 +1,42 @@
+# ── Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# ── Python ───────────────────────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── Generated / local data (do not publish) ────────────────
+hormozi-index/
+.brain_cache/
+brain-retrieval-graph.html
+brain-session-graph.html
+brain-mobile-graph.html
+
+# Hormozi content — transcripts & derived vault are copyrighted.
+# Keep these local; do not push to public repos.
+transcripts/
+hormozi-brain/
+
+# ── Web frontend ─────────────────────────────────────────────
+web/node_modules/
+web/dist/
+
+# ── IDE / OS ─────────────────────────────────────────────────
+.cursor/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,6 @@
+google-genai
+chromadb
+python-dotenv
+mcp
+fastapi
+uvicorn[standard]

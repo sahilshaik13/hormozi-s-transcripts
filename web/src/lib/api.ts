@@ -1,0 +1,76 @@
+import type { BrainStats, Chunk, GraphData } from "../types";
+
+const TOKEN_KEY = "hormozi_web_token";
+
+export function getToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+export function setToken(token: string) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string>),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(path, { ...init, headers });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function fetchStats(): Promise<BrainStats> {
+  return api("/api/stats");
+}
+
+export async function fetchGraph(): Promise<GraphData> {
+  return api("/api/graph");
+}
+
+export async function highlightGraph(
+  chunks: Chunk[],
+  sessionHits: Record<string, number>,
+  question = "",
+): Promise<GraphData> {
+  return api("/api/graph/highlight", {
+    method: "POST",
+    body: JSON.stringify({
+      chunks,
+      question,
+      session_hits: sessionHits,
+    }),
+  });
+}
+
+export async function askBrain(
+  question: string,
+  domain: string | null,
+  history: { role: string; content: string }[],
+): Promise<{ answer: string; chunks: Chunk[]; graph: GraphData; question: string }> {
+  return api("/api/ask", {
+    method: "POST",
+    body: JSON.stringify({ question, domain, history }),
+  });
+}
+
+export async function searchBrain(
+  query: string,
+  domain: string | null,
+): Promise<{ chunks: Chunk[]; graph: GraphData; query: string }> {
+  return api("/api/search", {
+    method: "POST",
+    body: JSON.stringify({ query, domain }),
+  });
+}
+
+export async function fetchNote(path: string): Promise<{ path: string; title: string; content: string }> {
+  return api(`/api/note?path=${encodeURIComponent(path)}`);
+}
