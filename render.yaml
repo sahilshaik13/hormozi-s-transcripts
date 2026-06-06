@@ -1,28 +1,18 @@
-# Render Blueprint — https://render.com/docs/blueprint-spec
-# Connect repo → New Blueprint → point at this file.
+# Render Blueprint — no persistent disk required (data baked into Docker image).
 #
-# After first deploy, upload hormozi-brain/ and hormozi-index/ to the persistent
-# disk (or uncomment COPY lines in Dockerfile and redeploy from a machine that
-# has the data).
+# BEFORE first deploy, run:  scripts\stage_for_render.bat
+# That force-adds hormozi-brain/ + hormozi-index/ to git (private repo only).
 
 services:
   - type: web
     name: hormozi-brain
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: GEMINI_API_KEY
         sync: false
       - key: HORMOZI_WEB_TOKEN
         sync: false
-      - key: HORMOZI_VAULT_DIR
-        value: /data/hormozi-brain
-      - key: HORMOZI_INDEX_DIR
-        value: /data/hormozi-index
       - key: PYTHON_VERSION
         value: "3.12.0"
-    disk:
-      name: hormozi-data
-      mountPath: /data
-      sizeGB: 2

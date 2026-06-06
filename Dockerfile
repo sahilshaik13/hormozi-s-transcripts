@@ -26,10 +26,10 @@ COPY app.py app.py
 
 COPY --from=webbuild /app/web/dist /app/web/dist
 
-# Optional: bake vault + index into image (private deploy only).
-# Uncomment after ensuring data exists locally:
-# COPY hormozi-brain/ hormozi-brain/
-# COPY hormozi-index/ hormozi-index/
+# Vault + index baked into image (no Render Pro disk needed).
+# Requires hormozi-brain/ and hormozi-index/ in the git commit — see scripts/stage_for_render.bat
+COPY hormozi-brain/ hormozi-brain/
+COPY hormozi-index/ hormozi-index/
 
 ENV PORT=8000
 EXPOSE 8000
