@@ -7,4 +7,4 @@ web/node_modules/
 web/dist/
 tools/
 cli/
-*.html
+brain-*.html

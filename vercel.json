@@ -1,17 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm install --prefix web && pip install -r requirements.txt",
-  "buildCommand": "python vercel_build.py",
-  "functions": {
-    "app.py": {
-      "maxDuration": 120,
-      "memory": 3008,
-      "includeFiles": "{hormozi-index/**,hormozi-brain/**,backend/**}"
-    }
-  },
+  "installCommand": "npm install && npm install --prefix web && python3 -m pip install -r requirements.txt",
+  "buildCommand": "npm run vercel-build",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 DIST = WEB / "dist"
-PUBLIC = ROOT / "public"
 
 
 def run(cmd: list[str]) -> None:
@@ -34,16 +32,16 @@ def main() -> None:
         )
 
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
-    run([npm, "install", "--prefix", str(WEB)])
+    if not (WEB / "node_modules").is_dir():
+        run([npm, "install", "--prefix", str(WEB)])
     run([npm, "run", "build", "--prefix", str(WEB)])
 
     if not DIST.is_dir():
         raise SystemExit(f"Vite build output missing: {DIST}")
 
-    if PUBLIC.exists():
-        shutil.rmtree(PUBLIC)
-    shutil.copytree(DIST, PUBLIC)
-    print(f"Copied UI to {PUBLIC}", flush=True)
+    node = "node.exe" if sys.platform == "win32" else "node"
+    run([node, str(ROOT / "scripts" / "copy-public.mjs")])
+
 
 
 if __name__ == "__main__":

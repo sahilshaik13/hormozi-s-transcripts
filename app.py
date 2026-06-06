@@ -1,4 +1,4 @@
-"""Vercel entrypoint — FastAPI backend on the same deployment as the web UI."""
+"""Vercel FastAPI entrypoint (auto-detected; do not use api/ + functions config)."""
 
 from backend.server import app
 
