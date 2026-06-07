@@ -1,0 +1,21 @@
+{
+    "decisions": [
+      {
+        "id": 1,
+        "date": "2026-06-07",
+        "category": "strategy",
+        "question": "What is the go-to-market approach?",
+        "options_considered": [
+          "Build SaaS product first, then find customers",
+          "Find customers first, then build",
+          "Target enterprises directly from day one"
+        ],
+        "hormozi_recommendation": "Find customers first. Do free AI audits for mid-market Hyderabad companies. Land one paid project. Use that as the case study to approach enterprises.",
+        "decision_made": "Pending — Sahi has not selected target industry yet",
+        "outcome": null,
+        "follow_up": "Select one target industry this week"
+      }
+    ],
+    "total_decisions": 1,
+    "last_updated": "2026-06-07"
+  }

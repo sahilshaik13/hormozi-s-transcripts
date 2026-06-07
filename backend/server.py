@@ -10,10 +10,27 @@ Dev (API + Vite):
 MCP (Claude.ai):
   Add https://hormozi-s-transcripts.onrender.com/mcp
   in Claude.ai → Settings → Integrations → Add custom MCP server
+
+Cofounder API:
+  GET  /api/cofounder/briefing   → morning audit
+  POST /api/cofounder/ask        → ask cofounder a question
+  POST /api/cofounder/log        → log a decision
+  POST /api/cofounder/update     → update startup context
+  GET  /api/cofounder/context    → read current startup state
+  GET  /api/cofounder/decisions  → read decision log
+
+ENV VARS REQUIRED:
+  GEMINI_API_KEY        → Gemini API key (for cofounder answers)
+  HORMOZI_WEB_TOKEN     → optional auth token
+  CORS_ORIGINS          → optional extra CORS origins (comma separated)
+  CORS_ORIGIN_REGEX     → optional regex for CORS (default: vercel.app)
+  HORMOZI_BACKEND_URL   → override backend URL (optional)
+  GEMINI_MODEL          → override Gemini model (optional)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -36,11 +53,19 @@ from backend.viz import (
     build_full_vault_graph,
     normalize_key,
 )
+from cofounder.cofounder import (
+    ask_cofounder,
+    daily_briefing,
+    get_context,
+    get_decisions,
+    log_decision,
+    update_context,
+)
 
 load_env()
 
 WEB_TOKEN = os.getenv("HORMOZI_WEB_TOKEN", "").strip()
-_bearer = HTTPBearer(auto_error=False)
+_bearer   = HTTPBearer(auto_error=False)
 
 _full_graph_cache: dict | None = None
 
@@ -54,28 +79,54 @@ def require_auth(
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 
-# ── Pydantic models (unchanged) ───────────────────────────────
+# ════════════════════════════════════════════════════════════════
+#  PYDANTIC MODELS
+# ════════════════════════════════════════════════════════════════
 
 class SearchRequest(BaseModel):
-    query: str
+    query:  str
     domain: str | None = None
-    top_k: int = Field(default=8, ge=1, le=20)
+    top_k:  int = Field(default=8, ge=1, le=20)
 
 
 class AskRequest(BaseModel):
     question: str
-    domain: str | None = None
-    top_k: int = Field(default=8, ge=1, le=20)
-    history: list[dict[str, str]] = Field(default_factory=list)
+    domain:   str | None = None
+    top_k:    int = Field(default=8, ge=1, le=20)
+    history:  list[dict[str, str]] = Field(default_factory=list)
 
 
 class GraphHighlightRequest(BaseModel):
-    chunks: list[dict[str, Any]]
-    question: str = ""
+    chunks:       list[dict[str, Any]]
+    question:     str = ""
     session_hits: dict[str, int] = Field(default_factory=dict)
 
 
-# ── Graph helpers (unchanged) ─────────────────────────────────
+# ── Cofounder models ──────────────────────────────────────────
+
+class CofoundAskRequest(BaseModel):
+    question: str
+    domain:   str | None = None
+
+
+class CofoundLogRequest(BaseModel):
+    question:               str
+    options_considered:     list[str]
+    hormozi_recommendation: str
+    decision_made:          str
+    category:               str = "strategy"
+    outcome:                str | None = None
+    follow_up:              str | None = None
+
+
+class CofoundUpdateRequest(BaseModel):
+    field_path: str
+    value:      Any
+
+
+# ════════════════════════════════════════════════════════════════
+#  GRAPH HELPERS
+# ════════════════════════════════════════════════════════════════
 
 def get_full_graph() -> dict:
     global _full_graph_cache
@@ -95,12 +146,12 @@ def graph_for_api(graph: dict) -> dict:
             {
                 "source": e["from"],
                 "target": e["to"],
-                "type": e.get("type", "wikilink"),
-                "label": e.get("label", ""),
+                "type":   e.get("type", "wikilink"),
+                "label":  e.get("label", ""),
             }
             for e in graph.get("edges", [])
         ],
-        "stats": graph.get("stats", {}),
+        "stats":      graph.get("stats", {}),
         "typeColors": TYPE_COLORS,
     }
 
@@ -112,6 +163,7 @@ def graph_for_api(graph: dict) -> dict:
 DOMAIN_ENUM = sorted(DOMAIN_TYPE_MAP.keys())
 
 MCP_TOOLS = [
+    # ── Brain tools ───────────────────────────────────────────
     {
         "name": "search_hormozi_brain",
         "description": (
@@ -180,7 +232,8 @@ MCP_TOOLS = [
         "name": "read_hormozi_note",
         "description": (
             "Read the full markdown content of a specific Hormozi brain note. "
-            "Use paths like '01 Frameworks/Value Equation' or '02 Mental Models/Theory of Constraints'."
+            "Use paths like '01 Frameworks/Value Equation' or "
+            "'02 Mental Models/Theory of Constraints'."
         ),
         "inputSchema": {
             "type": "object",
@@ -204,7 +257,123 @@ MCP_TOOLS = [
             "properties": {},
             "required": []
         }
-    }
+    },
+
+    # ── Cofounder tools ───────────────────────────────────────
+    {
+        "name": "ask_cofounder",
+        "description": (
+            "Ask Hormozi a question as your AI business cofounder. "
+            "He knows your startup context, stage, goals, constraints, "
+            "and every decision made so far. Answers are grounded in his "
+            "extracted knowledge vault with citations. Always ends with "
+            "one specific action to take today. Use for strategy, offers, "
+            "pricing, hiring, sales, mindset, and any business decision."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "Your question for your cofounder Hormozi."
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain filter.",
+                    "enum": DOMAIN_ENUM
+                }
+            },
+            "required": ["question"]
+        }
+    },
+    {
+        "name": "cofounder_daily_briefing",
+        "description": (
+            "Get Hormozi's daily cofounder audit. No question needed. "
+            "He reviews your startup state and tells you: what to do today, "
+            "what risk you're ignoring, whether your strategy is on track, "
+            "and what decision has been delayed too long. Run this every morning."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "cofounder_log_decision",
+        "description": (
+            "Log a major startup decision to the permanent decision log. "
+            "Hormozi will reference past decisions in future answers. "
+            "Use whenever a major decision is made: strategy pivots, "
+            "pricing changes, hiring decisions, market selection, etc."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The decision that needed to be made."
+                },
+                "options_considered": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of options that were on the table."
+                },
+                "hormozi_recommendation": {
+                    "type": "string",
+                    "description": "What Hormozi recommended."
+                },
+                "decision_made": {
+                    "type": "string",
+                    "description": "What was actually decided."
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Decision category.",
+                    "enum": ["strategy", "product", "market", "hiring", "finance"]
+                },
+                "outcome": {
+                    "type": "string",
+                    "description": "Result of the decision (fill in later)."
+                },
+                "follow_up": {
+                    "type": "string",
+                    "description": "Next action required from this decision."
+                }
+            },
+            "required": [
+                "question", "options_considered",
+                "hormozi_recommendation", "decision_made"
+            ]
+        }
+    },
+    {
+        "name": "cofounder_update_context",
+        "description": (
+            "Update your startup context so Hormozi stays current. "
+            "Use dot-notation field paths. Examples: "
+            "'startup.name', 'startup.revenue', 'startup.target_industries', "
+            "'goals.current_focus', 'strategy.current_blockers'. "
+            "Call this whenever something meaningful changes in your startup."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "field_path": {
+                    "type": "string",
+                    "description": (
+                        "Dot-notation path e.g. 'startup.name' "
+                        "or 'goals.current_focus'"
+                    )
+                },
+                "value": {
+                    "description": "New value (string, number, or array)."
+                }
+            },
+            "required": ["field_path", "value"]
+        }
+    },
 ]
 
 
@@ -234,7 +403,7 @@ def _mcp_search(args: dict) -> str:
 
 
 def _mcp_ask(args: dict) -> str:
-    result = get_brain().ask(
+    result  = get_brain().ask(
         args["question"],
         domain=args.get("domain"),
         history=[],
@@ -247,14 +416,15 @@ def _mcp_ask(args: dict) -> str:
         videos = src.get("source_videos", [])
         lines.append(
             f"  [{i}] {src.get('note_title','?')} ({src.get('note_type','?')}) "
-            f"— {src.get('relevance','?')} — from: {', '.join(videos) if videos else 'Unknown'}"
+            f"— {src.get('relevance','?')} "
+            f"— from: {', '.join(videos) if videos else 'Unknown'}"
         )
     return "\n".join(lines)
 
 
 def _mcp_stats() -> str:
-    data   = get_brain().stats()
-    lines  = ["HORMOZI BRAIN — VAULT STATS\n"]
+    data  = get_brain().stats()
+    lines = ["HORMOZI BRAIN — VAULT STATS\n"]
     lines.append(f"  Notes  : {data.get('total_notes', data.get('notes','?'))}")
     lines.append(f"  Chunks : {data.get('total_chunks', data.get('chunks','?'))}")
     by_type = data.get("by_type", data.get("note_types", {}))
@@ -275,28 +445,25 @@ def _mcp_read_note(args: dict) -> str:
     safe      = normalize_key(note_path.strip())
     if ".." in safe or safe.startswith("/"):
         return "Invalid path."
-    vault      = Path(VAULT_DIR).resolve()
-    full_path  = (vault / safe).resolve()
+    vault     = Path(VAULT_DIR).resolve()
+    full_path = (vault / safe).resolve()
     if not str(full_path).startswith(str(vault)):
         return "Invalid path."
-    # Try with and without .md extension
     for candidate in [full_path, Path(str(full_path) + ".md")]:
         if candidate.exists():
-            content = candidate.read_text(encoding="utf-8")
-            return f"# {candidate.stem}\n\n{content}"
+            return f"# {candidate.stem}\n\n{candidate.read_text(encoding='utf-8')}"
     return f"Note not found: '{note_path}'"
 
 
 def _mcp_graph_summary() -> str:
-    graph  = get_full_graph()
-    nodes  = graph.get("nodes", [])
-    edges  = graph.get("edges", [])
-    lines  = [
+    graph = get_full_graph()
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    lines = [
         "HORMOZI BRAIN — KNOWLEDGE GRAPH SUMMARY\n",
         f"  Total nodes : {len(nodes)}",
         f"  Total edges : {len(edges)}",
     ]
-    # Connection counts
     counts: dict[str, int] = {n.get("id", n.get("name", "")): 0 for n in nodes}
     for edge in edges:
         for key in ("from", "source"):
@@ -309,7 +476,6 @@ def _mcp_graph_summary() -> str:
     lines.append("\n  Top 10 most connected nodes:")
     for name, cnt in top:
         lines.append(f"    {name[:50]:<50} {cnt} links")
-    # Type breakdown
     type_counts: dict[str, int] = {}
     for node in nodes:
         t = node.get("type", node.get("group", "unknown"))
@@ -320,18 +486,47 @@ def _mcp_graph_summary() -> str:
     return "\n".join(lines)
 
 
+def _mcp_ask_cofounder(args: dict) -> str:
+    result = ask_cofounder(args["question"], domain=args.get("domain"))
+    return result.get("answer", "No answer returned.")
+
+
+def _mcp_cofounder_briefing() -> str:
+    result = daily_briefing()
+    return f"📋 DAILY BRIEFING — {result['date']}\n\n{result['briefing']}"
+
+
+def _mcp_cofounder_log(args: dict) -> str:
+    result = log_decision(
+        question=args["question"],
+        options_considered=args.get("options_considered", []),
+        hormozi_recommendation=args.get("hormozi_recommendation", ""),
+        decision_made=args.get("decision_made", ""),
+        category=args.get("category", "strategy"),
+        outcome=args.get("outcome"),
+        follow_up=args.get("follow_up"),
+    )
+    return f"✓ Decision #{result['decision_id']} logged to decision_log.json"
+
+
+def _mcp_cofounder_update(args: dict) -> str:
+    result = update_context(args["field_path"], args["value"])
+    return f"✓ Updated {result['field']} = {result['value']}"
+
+
 def execute_mcp_tool(name: str, args: dict) -> str:
     """Route a tool call to the right executor."""
-    if name == "search_hormozi_brain":
-        return _mcp_search(args)
-    if name == "ask_hormozi_brain":
-        return _mcp_ask(args)
-    if name == "hormozi_brain_stats":
-        return _mcp_stats()
-    if name == "read_hormozi_note":
-        return _mcp_read_note(args)
-    if name == "hormozi_graph_summary":
-        return _mcp_graph_summary()
+    # Brain tools
+    if name == "search_hormozi_brain":    return _mcp_search(args)
+    if name == "ask_hormozi_brain":       return _mcp_ask(args)
+    if name == "hormozi_brain_stats":     return _mcp_stats()
+    if name == "read_hormozi_note":       return _mcp_read_note(args)
+    if name == "hormozi_graph_summary":   return _mcp_graph_summary()
+    # Cofounder tools
+    if name == "ask_cofounder":           return _mcp_ask_cofounder(args)
+    if name == "cofounder_daily_briefing":return _mcp_cofounder_briefing()
+    if name == "cofounder_log_decision":  return _mcp_cofounder_log(args)
+    if name == "cofounder_update_context":return _mcp_cofounder_update(args)
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -340,7 +535,6 @@ def execute_mcp_tool(name: str, args: dict) -> str:
 # ════════════════════════════════════════════════════════════════
 
 def _sse(event: str, data: Any) -> str:
-    """Format a single SSE message."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
@@ -354,13 +548,13 @@ def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════
-#  APP SETUP  (unchanged from original)
+#  APP SETUP
 # ════════════════════════════════════════════════════════════════
 
 app = FastAPI(
     title="Hormozi Brain",
-    description="Private RAG web API for the Hormozi knowledge vault",
-    version="1.0.0",
+    description="Private RAG web API + AI Cofounder for the Hormozi knowledge vault",
+    version="2.0.0",
 )
 
 
@@ -378,8 +572,7 @@ def _cors_origins() -> list[str]:
 
 
 def _cors_origin_regex() -> str | None:
-    raw = os.getenv("CORS_ORIGIN_REGEX",
-                    r"https://.*\.vercel\.app").strip()
+    raw = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip()
     return raw or None
 
 
@@ -394,12 +587,12 @@ app.add_middleware(
 
 
 # ════════════════════════════════════════════════════════════════
-#  EXISTING API ROUTES  (all unchanged)
+#  EXISTING API ROUTES
 # ════════════════════════════════════════════════════════════════
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.0.0"}
 
 
 @app.get("/api/stats", dependencies=[Depends(require_auth)])
@@ -432,9 +625,11 @@ def highlight_graph(body: GraphHighlightRequest) -> dict:
 @app.post("/api/search", dependencies=[Depends(require_auth)])
 def search(body: SearchRequest) -> dict:
     try:
-        chunks = get_brain().search(body.query, domain=body.domain, top_k=body.top_k)
-        base   = get_full_graph()
-        graph  = apply_retrieval_highlights(base, chunks, body.query)
+        chunks = get_brain().search(
+            body.query, domain=body.domain, top_k=body.top_k
+        )
+        base  = get_full_graph()
+        graph = apply_retrieval_highlights(base, chunks, body.query)
         return {
             "chunks": chunks,
             "query":  body.query,
@@ -471,8 +666,8 @@ def read_note(
     safe = normalize_key(path.strip())
     if ".." in safe or safe.startswith("/"):
         raise HTTPException(status_code=400, detail="Invalid path")
-    vault      = Path(VAULT_DIR).resolve()
-    note_path  = (vault / safe).resolve()
+    vault     = Path(VAULT_DIR).resolve()
+    note_path = (vault / safe).resolve()
     if not str(note_path).startswith(str(vault)) or not note_path.exists():
         raise HTTPException(status_code=404, detail="Note not found")
     return {
@@ -491,30 +686,89 @@ def refresh_graph_cache() -> dict:
 
 
 # ════════════════════════════════════════════════════════════════
-#  MCP ENDPOINT  (new)
+#  COFOUNDER API ROUTES
+# ════════════════════════════════════════════════════════════════
+
+@app.get("/api/cofounder/briefing", dependencies=[Depends(require_auth)])
+def cofounder_briefing() -> dict:
+    """Morning audit — no question needed. Hormozi reviews the startup state."""
+    try:
+        return daily_briefing()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/cofounder/ask", dependencies=[Depends(require_auth)])
+def cofounder_ask(body: CofoundAskRequest) -> dict:
+    """Ask Hormozi a question as your cofounder. Full startup context injected."""
+    try:
+        return ask_cofounder(body.question, domain=body.domain)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/cofounder/log", dependencies=[Depends(require_auth)])
+def cofounder_log(body: CofoundLogRequest) -> dict:
+    """Log a major decision to the permanent decision log."""
+    try:
+        return log_decision(
+            question=body.question,
+            options_considered=body.options_considered,
+            hormozi_recommendation=body.hormozi_recommendation,
+            decision_made=body.decision_made,
+            category=body.category,
+            outcome=body.outcome,
+            follow_up=body.follow_up,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/cofounder/update", dependencies=[Depends(require_auth)])
+def cofounder_update(body: CofoundUpdateRequest) -> dict:
+    """Update a field in startup_context.json using dot-notation path."""
+    try:
+        return update_context(body.field_path, body.value)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cofounder/context", dependencies=[Depends(require_auth)])
+def cofounder_context() -> dict:
+    """Read the full current startup context."""
+    try:
+        return get_context()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/cofounder/decisions", dependencies=[Depends(require_auth)])
+def cofounder_decisions() -> dict:
+    """Read the full decision log."""
+    try:
+        return get_decisions()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ════════════════════════════════════════════════════════════════
+#  MCP SSE ENDPOINT
 # ════════════════════════════════════════════════════════════════
 
 @app.get("/mcp")
 async def mcp_sse(request: Request) -> StreamingResponse:
     """
     MCP SSE endpoint for Claude.ai integration.
-    Claude.ai connects here via GET and receives:
-      1. An 'endpoint' event pointing to POST /mcp
-      2. Stays open for server-initiated messages (not used here)
-
-    Add this URL in Claude.ai → Settings → Integrations:
+    Add in Claude.ai → Settings → Integrations:
       https://hormozi-s-transcripts.onrender.com/mcp
     """
     async def event_stream():
-        # Tell Claude where to POST tool calls
         post_url = str(request.base_url).rstrip("/") + "/mcp"
         yield _sse("endpoint", post_url)
-        # Keep connection alive
         while True:
             if await request.is_disconnected():
                 break
             yield ": keep-alive\n\n"
-            import asyncio
             await asyncio.sleep(15)
 
     return StreamingResponse(
@@ -530,58 +784,51 @@ async def mcp_sse(request: Request) -> StreamingResponse:
 
 @app.post("/mcp")
 async def mcp_post(request: Request) -> dict:
-    """
-    MCP JSON-RPC handler.
-    Claude.ai POSTs tool calls here after connecting via GET /mcp.
-    No auth required — tools only read your vault, never write.
-    """
+    """MCP JSON-RPC handler — brain tools + cofounder tools."""
     try:
         body = await request.json()
     except Exception:
         return _jsonrpc_error(None, -32700, "Parse error")
 
-    method  = body.get("method", "")
-    req_id  = body.get("id")
-    params  = body.get("params", {})
+    method = body.get("method", "")
+    req_id = body.get("id")
+    params = body.get("params", {})
 
-    # ── Handshake ─────────────────────────────────────────────
     if method == "initialize":
         return _jsonrpc_result(req_id, {
             "protocolVersion": "2024-11-05",
             "capabilities":    {"tools": {}},
-            "serverInfo":      {"name": "hormozi-brain", "version": "1.0.0"},
+            "serverInfo":      {"name": "hormozi-brain", "version": "2.0.0"},
         })
 
     if method in ("notifications/initialized", "ping"):
         return _jsonrpc_result(req_id, {})
 
-    # ── Tool list ─────────────────────────────────────────────
     if method == "tools/list":
         return _jsonrpc_result(req_id, {"tools": MCP_TOOLS})
 
-    # ── Tool call ─────────────────────────────────────────────
     if method == "tools/call":
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
         try:
             output = execute_mcp_tool(tool_name, arguments)
             return _jsonrpc_result(req_id, {
-                "content":  [{"type": "text", "text": output}],
-                "isError":  False,
+                "content": [{"type": "text", "text": output}],
+                "isError": False,
             })
         except ValueError as exc:
             return _jsonrpc_error(req_id, -32601, str(exc))
         except Exception as exc:
             return _jsonrpc_result(req_id, {
-                "content":  [{"type": "text", "text": f"Tool error: {exc}"}],
-                "isError":  True,
+                "content": [{"type": "text", "text": f"Tool error: {exc}"}],
+                "isError": True,
             })
 
     return _jsonrpc_error(req_id, -32601, f"Method not found: {method}")
 
 
 # ════════════════════════════════════════════════════════════════
-#  SPA STATIC SERVING  (unchanged)
+#  SPA STATIC SERVING
 # ════════════════════════════════════════════════════════════════
 
 if WEB_DIST.exists() and not is_vercel():

@@ -1,0 +1,46 @@
+{
+    "founder": {
+      "name": "Sahi",
+      "location": "Hyderabad, India",
+      "background": "B.Tech CSE student, IEEE member, solo developer and freelancer",
+      "strengths": ["AI systems", "full-stack development", "GCP", "rapid prototyping"],
+      "constraints": ["pre-revenue", "student schedule", "limited capital"],
+      "partner": "Emergent Wingman"
+    },
+    "startup": {
+      "name": "",
+      "one_liner": "",
+      "domain": "AI automation + SaaS + dev consulting",
+      "stage": "idea",
+      "target_market": "mid-market to enterprise companies in India",
+      "target_industries": [],
+      "problem_being_solved": "",
+      "current_offer": "",
+      "pricing": "",
+      "revenue": 0,
+      "clients": [],
+      "case_studies": []
+    },
+    "goals": {
+      "90_day_goal": "Land first paid client and deliver one AI automation project",
+      "monthly_revenue_target_inr": 50000,
+      "year_1_goal": "3 retainer clients at 2L/month each",
+      "current_focus": "Identify target industry and build outreach list"
+    },
+    "strategy": {
+      "go_to_market": "Cold outreach to 50 Hyderabad companies offering free AI audit",
+      "positioning": "AI automation partner for mid-market Indian businesses",
+      "unfair_advantages": [
+        "Built Hormozi Brain — proof of AI system capability",
+        "Low cost base as student — can undercut on price initially",
+        "GCP expertise — enterprise-grade deployment from day one"
+      ],
+      "current_blockers": [
+        "No target industry selected yet",
+        "No outreach started",
+        "No case study or proof of work for enterprise"
+      ]
+    },
+    "decisions_summary": "No major decisions logged yet.",
+    "last_updated": "2026-06-07"
+  }
