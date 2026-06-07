@@ -24,6 +24,7 @@ COPY requirements.prod.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ backend/
+COPY cofounder/ cofounder/
 COPY app.py app.py
 COPY scripts/render_install_data.sh /tmp/render_install_data.sh
 RUN chmod +x /tmp/render_install_data.sh
