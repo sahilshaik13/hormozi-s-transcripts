@@ -20,12 +20,14 @@ Cofounder API:
   GET  /api/cofounder/decisions  → read decision log
 
 ENV VARS REQUIRED:
-  GEMINI_API_KEY        → Gemini API key (for cofounder answers)
+  OLLAMA_API_KEY        → Ollama Cloud API key (chat + cofounder)
+  OLLAMA_CHAT_MODEL     → optional chat model (default: deepseek-v4-flash:cloud)
+  EMBED_BACKEND         → fastembed (default) or ollama for local embed API
+  FASTEMBED_MODEL       → optional FastEmbed model (default: BAAI/bge-small-en-v1.5)
   HORMOZI_WEB_TOKEN     → optional auth token
   CORS_ORIGINS          → optional extra CORS origins (comma separated)
   CORS_ORIGIN_REGEX     → optional regex for CORS (default: vercel.app)
   HORMOZI_BACKEND_URL   → override backend URL (optional)
-  GEMINI_MODEL          → override Gemini model (optional)
 """
 
 from __future__ import annotations

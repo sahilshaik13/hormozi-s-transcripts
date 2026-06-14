@@ -30,6 +30,10 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 # ── Paths ─────────────────────────────────────────────────────
 COFOUNDER_DIR   = Path(__file__).parent
 CONTEXT_FILE    = COFOUNDER_DIR / "startup_context.json"
@@ -40,19 +44,17 @@ BACKEND_URL     = os.getenv("HORMOZI_BACKEND_URL",
                              "https://hormozi-s-transcripts.onrender.com")
 AUTH_TOKEN      = os.getenv("HORMOZI_WEB_TOKEN", "").strip() or None
 
-# ── Gemini (for cofounder chat — same key as always) ──────────
-GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL    = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+# ── Ollama Cloud (for cofounder chat) ─────────────────────────
+# Uses OLLAMA_API_KEY + OLLAMA_CHAT_MODEL from .env (see .env.example)
 
 # ── How many past decisions to inject into every prompt ───────
 DECISION_HISTORY_LIMIT = 10
 
 try:
-    from google import genai
-    from google.genai import types as gtypes
-    GEMINI_AVAILABLE = True
+    from backend.ollama_client import chat as ollama_chat
+    OLLAMA_AVAILABLE = True
 except ImportError:
-    GEMINI_AVAILABLE = False
+    OLLAMA_AVAILABLE = False
 
 # ════════════════════════════════════════════════════════════════
 #  CONTEXT HELPERS
@@ -259,25 +261,22 @@ End with: → YOUR MOVE TODAY: [one specific action]
 """
 
 # ════════════════════════════════════════════════════════════════
-#  GEMINI CALL
+#  OLLAMA CALL
 # ════════════════════════════════════════════════════════════════
 
-def _call_gemini(prompt: str) -> str:
-    if not GEMINI_AVAILABLE:
-        return "❌ google-genai not installed. Run: pip install google-genai"
-    if not GEMINI_API_KEY:
-        return "❌ Set GEMINI_API_KEY as an environment variable."
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=gtypes.GenerateContentConfig(
-            system_instruction=COFOUNDER_SYSTEM,
+def _call_ollama(prompt: str) -> str:
+    if not OLLAMA_AVAILABLE:
+        return "❌ ollama package not installed. Run: pip install ollama"
+    try:
+        answer, _ = ollama_chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=COFOUNDER_SYSTEM,
             temperature=0.4,
-            max_output_tokens=2048,
+            num_predict=2048,
         )
-    )
-    return response.text
+        return answer
+    except Exception as exc:
+        return f"❌ Ollama error: {exc}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -309,7 +308,7 @@ def ask_cofounder(question: str, domain: str = None) -> dict:
 
     # Build and send prompt
     full_prompt = build_cofounder_prompt(question, ctx, log, brain_context)
-    raw_answer  = _call_gemini(full_prompt)
+    raw_answer  = _call_ollama(full_prompt)
 
     # Extract action item
     action = ""
@@ -352,7 +351,7 @@ def daily_briefing() -> dict:
     )
 
     full_prompt = build_cofounder_prompt(BRIEFING_QUESTION, ctx, log, brain_context)
-    raw_answer  = _call_gemini(full_prompt)
+    raw_answer  = _call_ollama(full_prompt)
 
     action = ""
     for line in raw_answer.splitlines():

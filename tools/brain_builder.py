@@ -1,12 +1,12 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║        HORMOZI BRAIN BUILDER v2 — Obsidian Vault Generator          ║
-║        Model: gemini-3.1-pro-preview                                ║
+║        Model: deepseek-v4-flash:cloud via Ollama Cloud              ║
 ║        Fix: Robust JSON repair + half-batch retry in Phase 2        ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 CHANGES FROM v1:
-  - repair_json()         — fixes common Gemini JSON malformation issues
+  - repair_json()         — fixes common LLM JSON malformation issues
   - Half-batch retry      — failed batches split in half and retried
   - Partial merge         — vault assembles from whatever batches succeeded
   - Raw fallback cache    — saves raw text on total failure for inspection
@@ -14,7 +14,7 @@ CHANGES FROM v1:
 
 USAGE:
   python tools/brain_builder.py
-  Set GEMINI_API_KEY in .env (see .env.example)
+  Set OLLAMA_API_KEY in .env (see .env.example)
 """
 
 # ════════════════════════════════════════════════════════════════
@@ -22,15 +22,19 @@ USAGE:
 # ════════════════════════════════════════════════════════════════
 
 # Paths from backend.paths (project root)
-import tools._bootstrap  # noqa: F401
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from backend.paths import CACHE_DIR, TRANSCRIPTS_DIR, VAULT_DIR as OUTPUT_DIR
 
 DELAY_BETWEEN_CALLS = 4
 MAX_RETRIES         = 3
 SYNTHESIS_BATCH     = 30      # initial batch size
 SYNTHESIS_HALF      = 15      # retry batch size on failure
-
-MODEL = "gemini-3.1-pro-preview"
 
 # ════════════════════════════════════════════════════════════════
 #  IMPORTS
@@ -43,14 +47,7 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 
-from backend.config import get_gemini_api_key
-
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    print("❌  Missing dependency. Run:  pip install google-genai")
-    exit(1)
+from backend.ollama_client import chat as ollama_chat
 
 # ════════════════════════════════════════════════════════════════
 #  PROMPTS  (unchanged from v1)
@@ -291,25 +288,19 @@ If you must truncate due to length, close all open arrays/objects properly first
 """
 
 # ════════════════════════════════════════════════════════════════
-#  GEMINI CLIENT
+#  OLLAMA CLIENT
 # ════════════════════════════════════════════════════════════════
 
-def get_client():
-    return genai.Client(api_key=get_gemini_api_key())
-
-def call_gemini(client, system_prompt, user_prompt, retries=MAX_RETRIES):
+def call_ollama(system_prompt, user_prompt, retries=MAX_RETRIES):
     for attempt in range(retries):
         try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.1,       # lower = more deterministic JSON
-                    max_output_tokens=8192,
-                )
+            content, _ = ollama_chat(
+                messages=[{"role": "user", "content": user_prompt}],
+                system=system_prompt,
+                temperature=0.1,
+                num_predict=8192,
             )
-            return response.text
+            return content
         except Exception as e:
             wait = (attempt + 1) * 10
             print(f"\n  ⚠  Attempt {attempt+1} failed: {e}. Retrying in {wait}s...")
@@ -500,7 +491,7 @@ def load_cache(filename: str) -> dict:
 #  PHASE 1 — PER-TRANSCRIPT EXTRACTION  (unchanged from v1)
 # ════════════════════════════════════════════════════════════════
 
-def phase1_extract(client) -> list:
+def phase1_extract() -> list:
     transcripts = sorted(Path(TRANSCRIPTS_DIR).glob("*.md"))
     total = len(transcripts)
 
@@ -557,7 +548,7 @@ def phase1_extract(client) -> list:
         )
 
         try:
-            raw = call_gemini(client, EXTRACTION_SYSTEM, user_prompt)
+            raw = call_ollama(EXTRACTION_SYSTEM, user_prompt)
             data = repair_json(raw)
             data["_source_file"] = filename
             save_cache(filename, data)
@@ -583,7 +574,7 @@ def phase1_extract(client) -> list:
 #  PHASE 2 — SYNTHESIS  (rewritten in v2)
 # ════════════════════════════════════════════════════════════════
 
-def run_synthesis_batch(client, batch: list, label: str) -> dict | None:
+def run_synthesis_batch(batch: list, label: str) -> dict | None:
     """
     Run one synthesis call with full repair pipeline.
     Returns parsed dict or None on total failure.
@@ -593,7 +584,7 @@ def run_synthesis_batch(client, batch: list, label: str) -> dict | None:
         extractions=json.dumps(batch, indent=2)
     )
     try:
-        raw = call_gemini(client, SYNTHESIS_SYSTEM, user_prompt)
+        raw = call_ollama(SYNTHESIS_SYSTEM, user_prompt)
         return repair_json(raw)
     except Exception as e:
         print(f"\n  ✗ {label} failed after repair: {e}")
@@ -647,7 +638,7 @@ def merge_synthesis_results(results: list) -> dict:
     return merged
 
 
-def phase2_synthesize(client, extractions: list) -> dict:
+def phase2_synthesize(extractions: list) -> dict:
     print(f"\n{'═'*60}")
     print(f"  PHASE 2 — Synthesizing {len(extractions)} extractions")
     print(f"  Initial batch size: {SYNTHESIS_BATCH} | Retry batch size: {SYNTHESIS_HALF}")
@@ -681,7 +672,7 @@ def phase2_synthesize(client, extractions: list) -> dict:
 
         # ── First attempt at full batch ───────────────────────
         print(f"  [{i}/{total_batches}] ⟳ synthesizing {label} ({len(batch)} items)...", end="", flush=True)
-        result = run_synthesis_batch(client, batch, label)
+        result = run_synthesis_batch(batch, label)
         time.sleep(DELAY_BETWEEN_CALLS * 2)
 
         if result:
@@ -708,7 +699,7 @@ def phase2_synthesize(client, extractions: list) -> dict:
                 continue
 
             print(f"    ⟳ {half_label} ({len(half)} items)...", end="", flush=True)
-            sub_result = run_synthesis_batch(client, half, half_label)
+            sub_result = run_synthesis_batch(half, half_label)
             time.sleep(DELAY_BETWEEN_CALLS * 2)
 
             if sub_result:
@@ -740,7 +731,7 @@ def phase2_synthesize(client, extractions: list) -> dict:
     else:
         print(f"\n  ⟳ Merging {len(batch_results)} successful batch syntheses...", end="", flush=True)
 
-        # Try a Gemini-powered final merge first
+        # Try an Ollama-powered final merge first
         merge_cache = Path(CACHE_DIR) / "synthesis_merge.json"
         if merge_cache.exists():
             final = json.loads(merge_cache.read_text(encoding="utf-8"))
@@ -760,12 +751,12 @@ PARTIAL SYNTHESES:
 {json.dumps(batch_results, indent=2)}
 """
             try:
-                raw = call_gemini(client, SYNTHESIS_SYSTEM, merge_prompt)
+                raw = call_ollama(SYNTHESIS_SYSTEM, merge_prompt)
                 final = repair_json(raw)
                 merge_cache.write_text(json.dumps(final, indent=2), encoding="utf-8")
                 print(f"  ✓")
             except Exception as e:
-                print(f"  ✗ Gemini merge failed ({e}) — using Python merge fallback")
+                print(f"  ✗ Ollama merge failed ({e}) — using Python merge fallback")
                 final = merge_synthesis_results(batch_results)
 
     # Save final
@@ -1105,7 +1096,7 @@ def main():
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║       HORMOZI BRAIN BUILDER v2 — Obsidian Vault             ║
-║       Model: gemini-3.1-pro-preview                         ║
+║       Model: deepseek-v4-flash:cloud via Ollama Cloud       ║
 ║       Fix: Robust JSON repair + half-batch retry            ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
@@ -1123,15 +1114,13 @@ def main():
     if stale_merge.exists():
         stale_merge.unlink()
 
-    client = get_client()
-
-    extractions = phase1_extract(client)
+    extractions = phase1_extract()
 
     if not extractions:
         print("❌  No extractions produced.")
         exit(1)
 
-    synthesis = phase2_synthesize(client, extractions)
+    synthesis = phase2_synthesize(extractions)
     phase3_assemble(extractions, synthesis)
 
     print("═" * 60)

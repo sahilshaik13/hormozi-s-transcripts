@@ -6,7 +6,9 @@ import re
 import sys
 from pathlib import Path
 
-import tools._bootstrap  # noqa: F401
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 TIMESTAMP = re.compile(
     r"\d{1,2}:\d{2}\d{1,2}\s*(?:minutes?(?:, \d+ seconds?)?|seconds?)",

@@ -10,8 +10,14 @@ services:
     plan: free
     healthCheckPath: /api/health
     envVars:
-      - key: GEMINI_API_KEY
+      - key: OLLAMA_API_KEY
         sync: false
+      - key: OLLAMA_CHAT_MODEL
+        value: "deepseek-v4-flash:cloud"
+      - key: EMBED_BACKEND
+        value: "fastembed"
+      - key: FASTEMBED_MODEL
+        value: "BAAI/bge-small-en-v1.5"
       - key: HORMOZI_WEB_TOKEN
         sync: false
       - key: PYTHON_VERSION

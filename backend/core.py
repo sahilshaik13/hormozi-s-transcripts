@@ -4,31 +4,20 @@ from __future__ import annotations
 
 import json
 import re
-import time
 
-from backend.config import get_gemini_api_key
+from backend.embeddings import embed_query
+from backend.ollama_client import chat_with_continuations
 from backend.paths import VAULT_DIR
 from backend.runtime import get_writable_index_dir
-
-try:
-    from google import genai
-    from google.genai import types
-    from google.genai.errors import ClientError
-except ImportError as exc:
-    raise SystemExit("Run: pip install google-genai") from exc
 
 try:
     import chromadb
 except ImportError as exc:
     raise SystemExit("Run: pip install chromadb") from exc
 
-CHAT_MODEL = "gemini-3.1-pro-preview"
-EMBED_MODEL = "gemini-embedding-001"
 TOP_K = 8
 MIN_RELEVANCE = 0.35
 HISTORY_TURNS = 6
-MAX_OUTPUT_TOKENS = 8192
-MAX_CONTINUATIONS = 2
 
 DOMAIN_TYPE_MAP = {
     "sales": ["framework", "tactic", "mental-model"],
@@ -94,26 +83,6 @@ def parse_domain_filter(question: str) -> tuple[str, str | None]:
     if match:
         return match.group(2).strip(), match.group(1).lower()
     return question.strip(), None
-
-
-def embed_query(client: genai.Client, text: str) -> list[float]:
-    config = types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
-    for attempt in range(6):
-        try:
-            result = client.models.embed_content(
-                model=EMBED_MODEL,
-                contents=text,
-                config=config,
-            )
-            return result.embeddings[0].values
-        except Exception as exc:
-            is_rate_limit = (
-                isinstance(exc, ClientError) and exc.code == 429
-            ) or "429" in str(exc).lower() or "resource_exhausted" in str(exc).lower()
-            if not is_rate_limit or attempt == 5:
-                raise
-            time.sleep(5 * (2 ** attempt))
-    raise RuntimeError("unreachable")
 
 
 def retrieve_chunks(
@@ -255,83 +224,21 @@ MY QUESTION:
     return messages
 
 
-def _finish_reason(response) -> types.FinishReason | None:
-    if not response.candidates:
-        return None
-    return response.candidates[0].finish_reason
-
-
-def _response_text(response) -> str:
-    if not response.candidates:
-        return response.text or ""
-    parts = []
-    for part in response.candidates[0].content.parts or []:
-        if getattr(part, "thought", False):
-            continue
-        if part.text:
-            parts.append(part.text)
-    return "".join(parts) if parts else (response.text or "")
-
-
-def call_hormozi(gemini_client: genai.Client, messages: list[dict]) -> str:
-    contents = []
-    for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append(
-            types.Content(role=role, parts=[types.Part(text=msg["content"])])
-        )
-
-    config = types.GenerateContentConfig(
-        system_instruction=HORMOZI_SYSTEM,
+def call_hormozi(messages: list[dict]) -> str:
+    return chat_with_continuations(
+        messages,
+        system=HORMOZI_SYSTEM,
         temperature=0.4,
-        max_output_tokens=MAX_OUTPUT_TOKENS,
-        thinking_config=types.ThinkingConfig(
-            thinking_level=types.ThinkingLevel.LOW,
-        ),
+        num_predict=8192,
+        max_continuations=2,
     )
-
-    chunks: list[str] = []
-    reason: types.FinishReason | None = None
-
-    for attempt in range(MAX_CONTINUATIONS + 1):
-        response = gemini_client.models.generate_content(
-            model=CHAT_MODEL,
-            contents=contents,
-            config=config,
-        )
-        text = _response_text(response)
-        if text:
-            chunks.append(text)
-        reason = _finish_reason(response)
-
-        if reason != types.FinishReason.MAX_TOKENS:
-            break
-        if attempt < MAX_CONTINUATIONS:
-            contents.append(types.Content(role="model", parts=[types.Part(text=text)]))
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text=(
-                        "Continue exactly where you stopped. Do not repeat anything "
-                        "already said. Finish the complete answer. Do not add a sources block."
-                    ))],
-                )
-            )
-
-    answer = "".join(chunks)
-    if reason == types.FinishReason.MAX_TOKENS:
-        answer += (
-            "\n\n_(Response hit token limit — ask a follow-up to continue.)_"
-        )
-    return answer
 
 
 class HormoziBrain:
-    """Lazy-loaded brain engine — ChromaDB index + Gemini client."""
+    """Lazy-loaded brain engine — ChromaDB index + Ollama Cloud."""
 
     def __init__(self) -> None:
         self._collection = None
-        self._gemini: genai.Client | None = None
         self._chunk_count: int | None = None
         self._note_count: int | None = None
 
@@ -359,14 +266,6 @@ class HormoziBrain:
         else:
             self._note_count = 0
 
-        self._gemini = genai.Client(api_key=get_gemini_api_key())
-
-    @property
-    def gemini(self) -> genai.Client:
-        self._load()
-        assert self._gemini is not None
-        return self._gemini
-
     @property
     def collection(self):
         self._load()
@@ -393,7 +292,7 @@ class HormoziBrain:
         self._load()
         q, parsed_domain = parse_domain_filter(query)
         domain = domain or parsed_domain
-        vector = embed_query(self.gemini, q)
+        vector = embed_query(q)
         return retrieve_chunks(self.collection, vector, top_k=top_k, domain_filter=domain)
 
     def ask(
@@ -421,7 +320,7 @@ class HormoziBrain:
         enriched = [enrich_chunk(c) for c in chunks]
         context_block = build_context_block(enriched)
         messages = build_messages(history or [], context_block, q)
-        answer = format_answer(call_hormozi(self.gemini, messages))
+        answer = format_answer(call_hormozi(messages))
         return {
             "answer": answer,
             "chunks": enriched,

@@ -6,7 +6,10 @@ import re
 import sys
 from pathlib import Path
 
-import tools._bootstrap  # noqa: F401
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from backend.paths import TRANSCRIPTS_DIR as TRANSCRIPTS
 
 BOOK_FILES = [

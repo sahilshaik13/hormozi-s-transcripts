@@ -3,27 +3,25 @@ HORMOZI BRAIN — Index Builder
 
 USAGE:
   python tools/build_index.py
+  python tools/build_index.py --rebuild   # non-interactive full rebuild
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import sys
 import time
 from pathlib import Path
 
-import tools._bootstrap  # noqa: F401 — adds project root to sys.path
+# Project root must be on sys.path before `import tools.*` or `import backend.*`
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-from backend.config import get_gemini_api_key
+from backend.embeddings import embed_texts, is_rate_limit_error
 from backend.paths import INDEX_DIR, VAULT_DIR
-
-try:
-    from google import genai
-    from google.genai import types
-    from google.genai.errors import ClientError
-except ImportError:
-    print("❌  Run: pip install google-genai")
-    exit(1)
 
 try:
     import chromadb
@@ -31,7 +29,6 @@ except ImportError:
     print("❌  Run: pip install chromadb")
     exit(1)
 
-EMBED_MODEL = "gemini-embedding-001"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 DELAY_EMBED = 1.0
@@ -108,26 +105,16 @@ def extract_source_videos(body: str) -> list[str]:
     return list(dict.fromkeys(m.strip() for m in appears if m.strip()))
 
 
-def is_rate_limit_error(exc: Exception) -> bool:
-    if isinstance(exc, ClientError) and exc.code == 429:
-        return True
-    msg = str(exc).lower()
-    return "429" in msg or "resource_exhausted" in msg or "rate limit" in msg
+def is_rate_limit_error_local(exc: Exception) -> bool:
+    return is_rate_limit_error(exc)
 
 
-def _embed_batch(client, batch: list[str], config: types.EmbedContentConfig) -> list[list[float]]:
-    contents = batch[0] if len(batch) == 1 else batch
-
+def _embed_batch(batch: list[str]) -> list[list[float]]:
     for attempt in range(RETRY_MAX + 1):
         try:
-            result = client.models.embed_content(
-                model=EMBED_MODEL,
-                contents=contents,
-                config=config,
-            )
-            return [e.values for e in result.embeddings]
+            return embed_texts(batch)
         except Exception as exc:
-            if not is_rate_limit_error(exc) or attempt == RETRY_MAX:
+            if not is_rate_limit_error_local(exc) or attempt == RETRY_MAX:
                 raise
             wait = RETRY_BASE_DELAY * (2 ** attempt)
             print(f"  ⏳ Rate limited — waiting {wait}s (retry {attempt + 1}/{RETRY_MAX})...")
@@ -135,16 +122,15 @@ def _embed_batch(client, batch: list[str], config: types.EmbedContentConfig) -> 
     raise RuntimeError("unreachable")
 
 
-def embed_texts(client, texts: list[str]) -> list[list[float]]:
+def embed_texts_for_index(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    config = types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
     all_vectors: list[list[float]] = []
 
     for start in range(0, len(texts), EMBED_BATCH_MAX):
         batch = texts[start:start + EMBED_BATCH_MAX]
-        all_vectors.extend(_embed_batch(client, batch, config))
+        all_vectors.extend(_embed_batch(batch))
         if start + EMBED_BATCH_MAX < len(texts):
             time.sleep(DELAY_EMBED)
 
@@ -152,10 +138,18 @@ def embed_texts(client, texts: list[str]) -> list[list[float]]:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build Hormozi Brain ChromaDB index")
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Delete existing index and rebuild from scratch (non-interactive)",
+    )
+    args = parser.parse_args()
+
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║         HORMOZI BRAIN — Index Builder                       ║
-║         Model: gemini-embedding-001 via Gemini              ║
+║         Embeddings: FastEmbed (local, no API key)           ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
@@ -179,9 +173,14 @@ def main():
     if "hormozi_brain" in existing:
         collection = chroma_client.get_collection("hormozi_brain")
         existing_count = collection.count()
-        print(f"  ⚠  Existing index found with {existing_count} chunks.")
-        print("  Options: (r)esume missing  (y) rebuild from scratch  (n) use existing")
-        choice = input("  Choice [r/y/n]: ").strip().lower()
+        if args.rebuild:
+            choice = "y"
+            print(f"  ⚠  Existing index found with {existing_count} chunks.")
+            print("  --rebuild: deleting and rebuilding from scratch.\n")
+        else:
+            print(f"  ⚠  Existing index found with {existing_count} chunks.")
+            print("  Options: (r)esume missing  (y) rebuild from scratch  (n) use existing")
+            choice = input("  Choice [r/y/n]: ").strip().lower()
         if choice == "y":
             chroma_client.delete_collection("hormozi_brain")
             collection = chroma_client.create_collection(
@@ -203,8 +202,6 @@ def main():
             name="hormozi_brain",
             metadata={"hnsw:space": "cosine"},
         )
-
-    gemini_client = genai.Client(api_key=get_gemini_api_key())
 
     print(f"  ⟳ Processing and embedding {total_notes} notes...\n")
 
@@ -258,8 +255,7 @@ def main():
             if not pending:
                 continue
 
-            vectors = embed_texts(
-                gemini_client,
+            vectors = embed_texts_for_index(
                 [item["embed_input"] for item in pending],
             )
 
