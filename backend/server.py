@@ -21,7 +21,7 @@ Cofounder API:
 
 ENV VARS REQUIRED:
   OLLAMA_API_KEY        → Ollama Cloud API key (chat + cofounder)
-  OLLAMA_CHAT_MODEL     → optional chat model (default: deepseek-v4-flash:cloud)
+  OLLAMA_CHAT_MODEL     → optional chat model (default: glm-4.7:cloud, free tier)
   EMBED_BACKEND         → fastembed (default) or ollama for local embed API
   FASTEMBED_MODEL       → optional FastEmbed model (default: BAAI/bge-small-en-v1.5)
   HORMOZI_WEB_TOKEN     → optional auth token

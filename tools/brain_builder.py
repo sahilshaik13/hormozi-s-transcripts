@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║        HORMOZI BRAIN BUILDER v2 — Obsidian Vault Generator          ║
-║        Model: deepseek-v4-flash:cloud via Ollama Cloud              ║
+║        Model: glm-4.7:cloud via Ollama Cloud (free tier)            ║
 ║        Fix: Robust JSON repair + half-batch retry in Phase 2        ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -1096,7 +1096,7 @@ def main():
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║       HORMOZI BRAIN BUILDER v2 — Obsidian Vault             ║
-║       Model: deepseek-v4-flash:cloud via Ollama Cloud       ║
+║       Model: glm-4.7:cloud via Ollama Cloud (free tier)     ║
 ║       Fix: Robust JSON repair + half-batch retry            ║
 ╚══════════════════════════════════════════════════════════════╝
 """)

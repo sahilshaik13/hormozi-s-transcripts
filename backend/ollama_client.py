@@ -28,6 +28,19 @@ def _chat_client() -> Client:
     )
 
 
+def _subscription_error(exc: Exception) -> RuntimeError | None:
+    msg = str(exc).lower()
+    if "403" in msg and ("subscription" in msg or "upgrade" in msg):
+        model = get_ollama_chat_model()
+        return RuntimeError(
+            f"Model '{model}' requires an Ollama Pro subscription. "
+            "Set OLLAMA_CHAT_MODEL to a free cloud model in .env, e.g. "
+            "glm-4.7:cloud, gpt-oss:20b-cloud, or minimax-m2.5:cloud. "
+            "See https://ollama.com/pricing"
+        )
+    return None
+
+
 def is_rate_limit_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "429" in msg or "rate limit" in msg or "too many" in msg
@@ -71,6 +84,9 @@ def chat(
             content = message.get("content") or ""
             return content, response.get("done_reason")
         except Exception as exc:
+            sub = _subscription_error(exc)
+            if sub:
+                raise sub from exc
             if not is_rate_limit_error(exc) or attempt == RETRY_MAX:
                 raise
             time.sleep(RETRY_BASE_DELAY * (2 ** attempt))

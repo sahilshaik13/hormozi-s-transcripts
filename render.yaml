@@ -13,7 +13,7 @@ services:
       - key: OLLAMA_API_KEY
         sync: false
       - key: OLLAMA_CHAT_MODEL
-        value: "deepseek-v4-flash:cloud"
+        value: "glm-4.7:cloud"
       - key: EMBED_BACKEND
         value: "fastembed"
       - key: FASTEMBED_MODEL

@@ -7,7 +7,7 @@ import os
 from backend.paths import PROJECT_ROOT
 
 DEFAULT_OLLAMA_HOST = "https://ollama.com"
-DEFAULT_OLLAMA_CHAT_MODEL = "deepseek-v4-flash:cloud"
+DEFAULT_OLLAMA_CHAT_MODEL = "glm-4.7:cloud"
 DEFAULT_OLLAMA_EMBED_MODEL = "nomic-embed-text"
 DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBED_BACKEND = "fastembed"
