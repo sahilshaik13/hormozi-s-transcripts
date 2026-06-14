@@ -8,6 +8,7 @@
 TOOLS EXPOSED TO CLAUDE:
   search_hormozi_brain   → semantic search, returns cited chunks
   ask_hormozi_brain      → full Hormozi-voice answer with citations
+  hormozi_health          → ping brain + embeddings + AI
   hormozi_brain_stats    → vault stats (notes, chunks, domains)
   read_hormozi_note      → read any vault note by title
   hormozi_graph          → full knowledge graph (nodes + edges)
@@ -157,29 +158,71 @@ def hormozi_brain_stats() -> str:
     if "error" in result:
         return f"Stats failed: {result['error']}"
 
+    # Inline formatter — avoids importing backend package in stdio MCP
     lines = ["HORMOZI BRAIN — VAULT STATS\n"]
-
-    # Handle different possible response shapes
-    notes  = result.get("total_notes",  result.get("notes",  "?"))
-    chunks = result.get("total_chunks", result.get("chunks", "?"))
+    notes = result.get("note_count", result.get("total_notes", result.get("notes", "?")))
+    chunks = result.get("chunk_count", result.get("total_chunks", result.get("chunks", "?")))
     lines.append(f"  Notes  : {notes}")
     lines.append(f"  Chunks : {chunks}")
 
-    # Note type breakdown
-    by_type = result.get("by_type", result.get("note_types", {}))
-    if by_type:
+    by_type = result.get("by_type", result.get("note_types"))
+    if isinstance(by_type, dict) and by_type:
         lines.append("\n  By type:")
         for ntype, count in by_type.items():
             lines.append(f"    {ntype:<20} {count}")
 
-    # Domain breakdown
-    by_domain = result.get("by_domain", result.get("domains", {}))
-    if by_domain:
+    domains = result.get("by_domain", result.get("domains"))
+    if isinstance(domains, list) and domains:
+        lines.append(f"\n  Domains ({len(domains)}):")
+        for domain in domains:
+            lines.append(f"    #{domain}")
+    elif isinstance(domains, dict) and domains:
         lines.append("\n  By domain:")
-        for domain, count in by_domain.items():
+        for domain, count in domains.items():
             lines.append(f"    #{domain:<18} {count}")
 
     return "\n".join(lines)
+
+
+def hormozi_health(probe_ai: bool = True) -> str:
+    """
+    Ping brain, embeddings, and Ollama AI in one report.
+    """
+    path = "/api/health/full"
+    if not probe_ai:
+        path += "?probe_ai=false"
+    result = _get(path)
+
+    if "error" in result:
+        return f"Health check failed: {result['error']}\n{result.get('detail', '')}"
+
+    lines = [
+        f"HORMOZI BRAIN HEALTH — {result.get('status', '?').upper()}",
+        f"  version: {result.get('version', '?')}\n",
+    ]
+    for name, check in result.get("checks", {}).items():
+        status = check.get("status", "?")
+        lines.append(f"  [{status.upper():^7}] {name}")
+        if name == "brain" and check.get("note_count") is not None:
+            lines.append(
+                f"           notes={check.get('note_count')} "
+                f"chunks={check.get('chunk_count')}"
+            )
+        if name == "embeddings" and check.get("backend"):
+            lines.append(
+                f"           backend={check['backend']} "
+                f"model={check.get('model', '?')} "
+                f"dims={check.get('dimensions', '?')}"
+            )
+        if name == "ai" and check.get("model"):
+            lines.append(f"           model={check['model']}")
+            if check.get("probe_reply"):
+                lines.append(f"           probe: {check['probe_reply'][:80]}")
+        if check.get("error"):
+            lines.append(f"           error: {check['error']}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def read_hormozi_note(note_path: str) -> str:
@@ -333,6 +376,24 @@ TOOLS = [
         }
     },
     {
+        "name": "hormozi_health",
+        "description": (
+            "Ping brain vault, search embeddings, and Ollama chat model in one call. "
+            "Use to verify everything is working before asking questions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "probe_ai": {
+                    "type": "boolean",
+                    "description": "Send a tiny test prompt to Ollama Cloud (default true).",
+                    "default": True,
+                }
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "hormozi_brain_stats",
         "description": (
             "Get stats about the Hormozi brain vault: total notes, chunks, "
@@ -430,6 +491,10 @@ def handle_request(req: dict) -> dict:
                     question=arguments["question"],
                     domain=arguments.get("domain")
                 )
+            elif tool_name == "hormozi_health":
+                output = hormozi_health(
+                    probe_ai=arguments.get("probe_ai", True)
+                )
             elif tool_name == "hormozi_brain_stats":
                 output = hormozi_brain_stats()
 
@@ -489,7 +554,7 @@ def main():
     print(f"Backend: {BACKEND_URL}", file=sys.stderr)
 
     # Verify backend is reachable
-    health = _get("/api/health")
+    health = _get("/api/health/full")
     if "error" in health:
         print(f"⚠  Backend unreachable: {health['error']}", file=sys.stderr)
         print("   Server will still start — backend may be cold-starting on Render.",

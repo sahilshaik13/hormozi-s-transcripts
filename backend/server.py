@@ -47,6 +47,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import load_env
 from backend.core import DOMAIN_TYPE_MAP, get_brain
+from backend.health import collect_health, format_brain_stats, format_health_report
 from backend.paths import VAULT_DIR, WEB_DIST
 from backend.runtime import is_vercel
 from backend.viz import (
@@ -217,6 +218,24 @@ MCP_TOOLS = [
             },
             "required": ["question"]
         }
+    },
+    {
+        "name": "hormozi_health",
+        "description": (
+            "Ping brain + embeddings + Ollama AI in one call. "
+            "Use to verify the vault index, search embeddings, and chat model are all working."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "probe_ai": {
+                    "type": "boolean",
+                    "description": "Send a tiny test prompt to Ollama Cloud (default true).",
+                    "default": True,
+                }
+            },
+            "required": [],
+        },
     },
     {
         "name": "hormozi_brain_stats",
@@ -425,21 +444,12 @@ def _mcp_ask(args: dict) -> str:
 
 
 def _mcp_stats() -> str:
-    data  = get_brain().stats()
-    lines = ["HORMOZI BRAIN — VAULT STATS\n"]
-    lines.append(f"  Notes  : {data.get('total_notes', data.get('notes','?'))}")
-    lines.append(f"  Chunks : {data.get('total_chunks', data.get('chunks','?'))}")
-    by_type = data.get("by_type", data.get("note_types", {}))
-    if by_type:
-        lines.append("\n  By type:")
-        for k, v in by_type.items():
-            lines.append(f"    {k:<20} {v}")
-    by_domain = data.get("by_domain", data.get("domains", {}))
-    if by_domain:
-        lines.append("\n  By domain:")
-        for k, v in by_domain.items():
-            lines.append(f"    #{k:<18} {v}")
-    return "\n".join(lines)
+    return format_brain_stats(get_brain().stats())
+
+
+def _mcp_health(args: dict) -> str:
+    report = collect_health(probe_ai=args.get("probe_ai", True))
+    return format_health_report(report)
 
 
 def _mcp_read_note(args: dict) -> str:
@@ -519,6 +529,7 @@ def _mcp_cofounder_update(args: dict) -> str:
 def execute_mcp_tool(name: str, args: dict) -> str:
     """Route a tool call to the right executor."""
     # Brain tools
+    if name == "hormozi_health":          return _mcp_health(args)
     if name == "search_hormozi_brain":    return _mcp_search(args)
     if name == "ask_hormozi_brain":       return _mcp_ask(args)
     if name == "hormozi_brain_stats":     return _mcp_stats()
@@ -593,8 +604,15 @@ app.add_middleware(
 # ════════════════════════════════════════════════════════════════
 
 @app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok", "version": "2.0.0"}
+def health(quick: bool = Query(True, description="If true, liveness only (for Render)")) -> dict:
+    if quick:
+        return {"status": "ok", "version": "2.0.0"}
+    return collect_health(probe_ai=True)
+
+
+@app.get("/api/health/full")
+def health_full(probe_ai: bool = Query(True)) -> dict:
+    return collect_health(probe_ai=probe_ai)
 
 
 @app.get("/api/stats", dependencies=[Depends(require_auth)])
